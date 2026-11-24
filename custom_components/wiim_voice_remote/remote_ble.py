@@ -70,20 +70,46 @@ class WiiMRemoteClient:
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._disconnected_event = asyncio.Event()
+        self._wake_event = asyncio.Event()
+        self._unsub_bt: Callable[[], None] | None = None
         self._voice_active = False
 
     def start(self) -> None:
-        """Start background connection loop."""
+        """Start background connection loop and register instant BLE wake callback."""
+        if self._unsub_bt is None:
+            self._unsub_bt = bluetooth.async_register_callback(
+                self.hass,
+                self._on_bt_advertisement,
+                bluetooth.BluetoothCallbackMatcher(
+                    address=self.mac_address,
+                    connectable=True,
+                ),
+                bluetooth.BluetoothScanningMode.ACTIVE,
+            )
         if self._task is None or self._task.done():
             self._stop_event.clear()
+            self._wake_event.set()
             self._task = self.hass.async_create_background_task(
                 self._run_loop(),
                 name=f"wiim_voice_remote_{self.mac_address}",
             )
 
+    def _on_bt_advertisement(
+        self,
+        _service_info: bluetooth.BluetoothServiceInfoBleak,
+        _change: bluetooth.BluetoothChange,
+    ) -> None:
+        """Wake the reconnect loop immediately when the remote advertises."""
+        if self._client is None or not self._client.is_connected:
+            self._wake_event.set()
+
     async def async_stop(self) -> None:
         """Stop background connection loop and disconnect."""
+        if self._unsub_bt is not None:
+            self._unsub_bt()
+            self._unsub_bt = None
         self._stop_event.set()
+        self._wake_event.set()
         self._disconnected_event.set()
         if self._client and self._client.is_connected:
             try:
@@ -166,7 +192,7 @@ class WiiMRemoteClient:
             ble_device,
             name=f"WiiM Voice Remote ({self.mac_address})",
             disconnected_callback=self._handle_disconnect,
-            max_attempts=2,
+            max_attempts=1,
         )
         self._client = client
 
@@ -236,6 +262,7 @@ class WiiMRemoteClient:
 
     async def _run_loop(self) -> None:
         while not self._stop_event.is_set():
+            self._wake_event.clear()
             try:
                 await self._connect_and_subscribe()
             except asyncio.CancelledError:
@@ -243,7 +270,11 @@ class WiiMRemoteClient:
             except Exception as err:
                 _LOGGER.debug("BLE connection error for %s: %s", self.mac_address, err)
 
+            if self._stop_event.is_set():
+                break
+
+            # Wait either for an instant BLE advertisement wake or a 3s retry timer
             try:
-                await asyncio.wait_for(self._stop_event.wait(), timeout=5.0)
+                await asyncio.wait_for(self._wake_event.wait(), timeout=3.0)
             except asyncio.TimeoutError:
                 pass
