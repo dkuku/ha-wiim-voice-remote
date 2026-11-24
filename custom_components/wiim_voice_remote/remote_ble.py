@@ -14,7 +14,7 @@ from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 
 from .adpcm import decode_wiim_adpcm_packet
-from .bluez_pair import async_bluez_pair_and_trust
+from .bluez_pair import async_bluez_pair_and_trust, async_bluez_remove_device
 from .const import (
     KBD_PRESETS,
     KEY_MUTE,
@@ -73,6 +73,7 @@ class WiiMRemoteClient:
         self._wake_event = asyncio.Event()
         self._unsub_bt: Callable[[], None] | None = None
         self._voice_active = False
+        self._consecutive_failures = 0
 
     def start(self) -> None:
         """Start background connection loop and register instant BLE wake callback."""
@@ -278,6 +279,7 @@ class WiiMRemoteClient:
             await client.start_notify(voice_char, self._on_voice_notify)
 
             _LOGGER.info("WiiM Voice Remote %s connected and ready", self.mac_address)
+            self._consecutive_failures = 0
             await self._disconnected_event.wait()
         finally:
             if client.is_connected:
@@ -295,7 +297,16 @@ class WiiMRemoteClient:
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                _LOGGER.debug("BLE connection error for %s: %s", self.mac_address, err)
+                self._consecutive_failures += 1
+                _LOGGER.debug(
+                    "BLE connection error for %s (#%d): %s",
+                    self.mac_address,
+                    self._consecutive_failures,
+                    err,
+                )
+                if self._consecutive_failures >= 2:
+                    self._consecutive_failures = 0
+                    await async_bluez_remove_device(self.mac_address)
 
             if self._stop_event.is_set():
                 break

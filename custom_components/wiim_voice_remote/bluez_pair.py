@@ -133,3 +133,41 @@ async def async_bluez_pair_and_trust(mac_address: str) -> bool:
                 bus.disconnect()
             except Exception:
                 pass
+
+
+async def async_bluez_remove_device(mac_address: str) -> bool:
+    """Remove a stale paired device from local BlueZ so it can re-pair cleanly."""
+    try:
+        from dbus_fast import BusType
+        from dbus_fast.aio import MessageBus
+    except ImportError:
+        return False
+
+    mac_suffix = f"/dev_{mac_address.upper().replace(':', '_')}"
+    bus = None
+    try:
+        bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+        root_intro = await bus.introspect("org.bluez", "/")
+        root_proxy = bus.get_proxy_object("org.bluez", "/", root_intro)
+        obj_mgr = root_proxy.get_interface("org.freedesktop.DBus.ObjectManager")
+        managed = await obj_mgr.call_get_managed_objects()
+
+        for path, ifaces in managed.items():
+            if path.endswith(mac_suffix) and "org.bluez.Device1" in ifaces:
+                adapter_path = path.rsplit("/", 1)[0]
+                ad_intro = await bus.introspect("org.bluez", adapter_path)
+                ad_proxy = bus.get_proxy_object("org.bluez", adapter_path, ad_intro)
+                ad_iface = ad_proxy.get_interface("org.bluez.Adapter1")
+                await ad_iface.call_remove_device(path)
+                _LOGGER.info("Removed stale BlueZ bond for %s (%s)", mac_address, path)
+                return True
+        return False
+    except Exception as err:
+        _LOGGER.debug("BlueZ RemoveDevice failed for %s: %s", mac_address, err)
+        return False
+    finally:
+        if bus is not None:
+            try:
+                bus.disconnect()
+            except Exception:
+                pass
