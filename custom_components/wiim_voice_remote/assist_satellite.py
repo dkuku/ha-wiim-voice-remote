@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterable
+import html
 import logging
+import re
 import ssl
 import urllib.request
 
@@ -363,6 +365,15 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
             if prev_state != "playing" or prev_source == "URL Stream":
                 return
 
+            # If WiiM IP is configured, resume WiiM's native UPnP CurrentQueue
+            # (restores vTuner radio, playlists, etc. even when content_id is None).
+            if self._wiim_ip:
+                resumed = await self.hass.async_add_executor_job(
+                    self._wiim_resume_current_queue
+                )
+                if resumed:
+                    return
+
             # Resume previous URL/radio stream if available, otherwise press play
             if (
                 prev_content_id
@@ -439,6 +450,57 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
                 service,
                 {"entity_id": self._media_player, **extra},
             )
+
+    def _wiim_upnp_playqueue(self, action: str, inner_xml: str) -> str | None:
+        if not self._wiim_ip:
+            return None
+        url = f"http://{self._wiim_ip}:49152/upnp/control/PlayQueue1"
+        body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
+            's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
+            "<s:Body>"
+            f'<u:{action} xmlns:u="urn:schemas-wiimu-com:service:PlayQueue:1">'
+            f"{inner_xml}"
+            f"</u:{action}>"
+            "</s:Body></s:Envelope>"
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=body,
+            headers={
+                "Content-Type": 'text/xml; charset="utf-8"',
+                "SOAPACTION": f'"urn:schemas-wiimu-com:service:PlayQueue:1#{action}"',
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=3.0) as resp:
+                return resp.read().decode("utf-8", errors="ignore")
+        except Exception as err:
+            _LOGGER.debug("WiiM UPnP %s failed: %s", action, err)
+            return None
+
+    def _wiim_resume_current_queue(self) -> bool:
+        """Resume the active WiiM UPnP CurrentQueue (e.g. vTuner radio / playlist)."""
+        raw = self._wiim_upnp_playqueue(
+            "BrowseQueue", "<QueueName>CurrentQueue</QueueName>"
+        )
+        if not raw:
+            return False
+        unescaped = html.unescape(raw)
+        total_m = re.search(r"<TotalNumber>(\d+)</TotalNumber>", unescaped)
+        if not total_m or int(total_m.group(1)) <= 0:
+            return False
+        idx_m = re.search(r"<LastPlayIndex>(\d+)</LastPlayIndex>", unescaped)
+        index = int(idx_m.group(1)) if idx_m and int(idx_m.group(1)) >= 1 else 1
+        _LOGGER.debug(
+            "Resuming WiiM UPnP CurrentQueue index=%d on %s", index, self._wiim_ip
+        )
+        resp = self._wiim_upnp_playqueue(
+            "PlayQueueWithIndex",
+            f"<QueueName>CurrentQueue</QueueName><Index>{index}</Index>",
+        )
+        return resp is not None
 
     def _call_wiim_http(self, command: str) -> str | None:
         if not self._wiim_ip:
