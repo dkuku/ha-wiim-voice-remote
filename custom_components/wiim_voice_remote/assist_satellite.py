@@ -241,23 +241,34 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
             await self._play_tts_url(announcement.media_id)
 
     async def _wait_for_tts_end(self, entity_id: str) -> None:
-        """Wait for the media_player to finish playing the TTS audio."""
-        # Give the player up to 3s to enter 'playing'
-        for _ in range(15):
+        """Wait for the media_player to actually start and finish playing the TTS audio."""
+        # Allow the player to transition away from its previous playing state and start TTS
+        await asyncio.sleep(1.5)
+
+        # Wait up to 4s for the player to report 'playing' for the TTS clip
+        started = False
+        for _ in range(20):
             st = self.hass.states.get(entity_id)
             if st and st.state == "playing":
+                started = True
                 break
             await asyncio.sleep(0.2)
-        else:
-            # Never reported 'playing' (some players stay idle/paused); brief pause
-            await asyncio.sleep(2.5)
+
+        if not started:
+            # Player did not report 'playing' (some integrations stay idle during announce)
+            await asyncio.sleep(3.5)
             return
 
-        # Wait up to 25s for TTS playback to finish
-        for _ in range(125):
+        # Wait up to 30s for TTS playback to finish (require 3 consecutive non-playing ticks)
+        non_playing_ticks = 0
+        for _ in range(150):
             st = self.hass.states.get(entity_id)
             if not st or st.state != "playing":
-                break
+                non_playing_ticks += 1
+                if non_playing_ticks >= 3:
+                    break
+            else:
+                non_playing_ticks = 0
             await asyncio.sleep(0.2)
 
     async def _play_tts_url(self, media_url: str) -> None:
@@ -278,6 +289,13 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
                 prev_source = snap.attributes.get("source")
                 prev_content_id = snap.attributes.get("media_content_id")
                 prev_content_type = snap.attributes.get("media_content_type")
+                _LOGGER.debug(
+                    "Pre-TTS snapshot on %s: state=%s source=%r content_id=%r",
+                    self._media_player,
+                    prev_state_name,
+                    prev_source,
+                    prev_content_id,
+                )
 
             try:
                 await self.hass.services.async_call(
@@ -332,10 +350,15 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
             cur = self.hass.states.get(self._media_player)
             cur_source = cur.attributes.get("source") if cur else None
 
-            # Restore physical/different source (e.g. HDMI, Optical, Line-In, Bluetooth)
-            if prev_source and prev_source != cur_source:
+            # Only call select_source for physical inputs (HDMI, Optical, Line-In, Bluetooth, etc.)
+            physical_keywords = ("hdmi", "optical", "line", "aux", "bluetooth", "coax", "phono", "arc")
+            if (
+                prev_source
+                and prev_source != cur_source
+                and any(kw in prev_source.lower() for kw in physical_keywords)
+            ):
                 _LOGGER.debug(
-                    "Restoring source %r on %s", prev_source, self._media_player
+                    "Restoring physical source %r on %s", prev_source, self._media_player
                 )
                 await self.hass.services.async_call(
                     "media_player",
