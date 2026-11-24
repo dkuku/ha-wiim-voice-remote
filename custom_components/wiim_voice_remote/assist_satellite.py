@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterable
 import html
+import json
 import logging
 import re
 import ssl
@@ -243,12 +244,48 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
         if self._media_player and announcement.media_id:
             await self._play_tts_url(announcement.media_id)
 
-    async def _wait_for_tts_end(self, entity_id: str) -> None:
-        """Wait for the media_player to actually start and finish playing the TTS audio."""
-        # Allow the player to transition away from its previous playing state and start TTS
-        await asyncio.sleep(1.5)
+    def _wiim_get_status(self) -> str | None:
+        raw = self._call_wiim_http("getPlayerStatus")
+        if not raw:
+            return None
+        try:
+            return str(json.loads(raw).get("status", "")).lower()
+        except Exception:
+            return None
 
-        # Wait up to 4s for the player to report 'playing' for the TTS clip
+    async def _wait_for_tts_end(self, entity_id: str) -> None:
+        """Wait for the player to actually start and finish playing the TTS audio."""
+        # Prefer direct real-time WiiM getPlayerStatus when wiim_ip is configured
+        if self._wiim_ip:
+            await asyncio.sleep(1.2)
+            # Wait up to 6s for WiiM to enter 'play' or 'load'
+            started = False
+            for _ in range(20):
+                st = await self.hass.async_add_executor_job(self._wiim_get_status)
+                if st in ("play", "load"):
+                    started = True
+                    break
+                await asyncio.sleep(0.3)
+
+            if not started:
+                await asyncio.sleep(2.0)
+                return
+
+            # Wait up to 45s for WiiM to finish ('stop' / 'pause' for 3 consecutive checks)
+            stopped_ticks = 0
+            for _ in range(150):
+                st = await self.hass.async_add_executor_job(self._wiim_get_status)
+                if st in ("play", "load"):
+                    stopped_ticks = 0
+                else:
+                    stopped_ticks += 1
+                    if stopped_ticks >= 3:
+                        break
+                await asyncio.sleep(0.3)
+            return
+
+        # Generic HA media_player fallback
+        await asyncio.sleep(1.5)
         started = False
         for _ in range(20):
             st = self.hass.states.get(entity_id)
@@ -258,17 +295,15 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
             await asyncio.sleep(0.2)
 
         if not started:
-            # Player did not report 'playing' (some integrations stay idle during announce)
             await asyncio.sleep(3.5)
             return
 
-        # Wait up to 30s for TTS playback to finish (require 3 consecutive non-playing ticks)
         non_playing_ticks = 0
         for _ in range(150):
             st = self.hass.states.get(entity_id)
             if not st or st.state != "playing":
                 non_playing_ticks += 1
-                if non_playing_ticks >= 3:
+                if non_playing_ticks >= 5:
                     break
             else:
                 non_playing_ticks = 0
