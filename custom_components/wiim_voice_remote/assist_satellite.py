@@ -307,34 +307,16 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
                     _LOGGER.debug("Could not resolve local HA URL: %s", url_err)
 
             _LOGGER.debug("Playing TTS on %s: %s", self._media_player, full_url)
-            try:
-                await self.hass.services.async_call(
-                    "media_player",
-                    "play_media",
-                    {
-                        "entity_id": self._media_player,
-                        "media_content_id": full_url,
-                        "media_content_type": "music",
-                        "announce": True,
-                    },
-                    blocking=True,
-                )
-            except Exception as first_err:
-                _LOGGER.debug(
-                    "play_media with announce=True failed on %s (%s); retrying without announce",
-                    self._media_player,
-                    first_err,
-                )
-                await self.hass.services.async_call(
-                    "media_player",
-                    "play_media",
-                    {
-                        "entity_id": self._media_player,
-                        "media_content_id": full_url,
-                        "media_content_type": "music",
-                    },
-                    blocking=True,
-                )
+            await self.hass.services.async_call(
+                "media_player",
+                "play_media",
+                {
+                    "entity_id": self._media_player,
+                    "media_content_id": full_url,
+                    "media_content_type": "music",
+                },
+                blocking=True,
+            )
 
             # Wait for TTS to finish, then restore previous source / playback
             await self._wait_for_tts_end(self._media_player)
@@ -378,7 +360,7 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
                 )
                 return
 
-            if prev_state != "playing":
+            if prev_state != "playing" or prev_source == "URL Stream":
                 return
 
             # Resume previous URL/radio stream if available, otherwise press play
