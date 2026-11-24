@@ -25,7 +25,6 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.network import get_url
 
 from .const import (
     CONF_MAC_ADDRESS,
@@ -89,7 +88,7 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
             manufacturer="WiiM / LinkPlay",
             model="WiiM Voice Remote",
         )
-        if self._media_player or self._wiim_ip:
+        if self._media_player:
             self._attr_supported_features = AssistSatelliteEntityFeature.ANNOUNCE
 
         self._audio_queue: asyncio.Queue[bytes | None] | None = None
@@ -208,8 +207,7 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
 
     async def _run_pipeline(self, queue: asyncio.Queue[bytes | None]) -> None:
         try:
-            has_speaker = bool(self._media_player or self._wiim_ip)
-            end_stage = PipelineStage.TTS if has_speaker else PipelineStage.INTENT
+            end_stage = PipelineStage.TTS if self._media_player else PipelineStage.INTENT
             await self.async_accept_pipeline_from_satellite(
                 self._audio_stream(queue),
                 start_stage=PipelineStage.STT,
@@ -221,11 +219,11 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
             self.tts_response_finished()
 
     def on_pipeline_event(self, event: PipelineEvent) -> None:
-        """Handle Assist pipeline events and play TTS on WiiM (playPromptUrl) or media_player."""
+        """Handle Assist pipeline events and play TTS on the configured media_player."""
         if event.type == PipelineEventType.TTS_END and event.data:
             tts_output = event.data.get("tts_output") or {}
             media_url = tts_output.get("url")
-            if media_url and (self._wiim_ip or self._media_player):
+            if media_url and self._media_player:
                 self.hass.async_create_task(self._play_tts_url(media_url))
             else:
                 self.hass.async_create_task(self._async_restore_mute())
@@ -234,54 +232,49 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
             if event.type == PipelineEventType.ERROR:
                 self.hass.async_create_task(self._async_restore_mute())
                 self.tts_response_finished()
-            elif not (self._wiim_ip or self._media_player):
+            elif not self._media_player:
                 self.hass.async_create_task(self._async_restore_mute())
 
     async def async_announce(self, announcement: AssistSatelliteAnnouncement) -> None:
-        """Play an announcement via WiiM playPromptUrl or the configured media_player."""
-        if (self._wiim_ip or self._media_player) and announcement.media_id:
+        """Play an announcement via the configured media_player."""
+        if self._media_player and announcement.media_id:
             await self._play_tts_url(announcement.media_id)
 
     async def _play_tts_url(self, media_url: str) -> None:
         try:
             await self._async_restore_mute()
-
-            # Prefer native WiiM playPromptUrl when wiim_ip is configured so current
-            # playback (Spotify, Tidal, AirPlay, HDMI, etc.) is NOT interrupted/replaced.
-            if self._wiim_ip:
-                full_url = media_url
-                if full_url.startswith("/"):
-                    try:
-                        base_url = get_url(self.hass, prefer_external=False)
-                        full_url = f"{base_url.rstrip('/')}{full_url}"
-                    except Exception as err:
-                        _LOGGER.debug("Could not resolve local HA URL: %s", err)
-                if full_url.startswith(("http://", "https://")):
-                    resp = await self.hass.async_add_executor_job(
-                        self._call_wiim_http, f"playPromptUrl:{full_url}"
-                    )
-                    if resp is not None and resp.strip().upper() == "OK":
-                        _LOGGER.debug("Played TTS via WiiM playPromptUrl (%s)", full_url)
-                        return
-                    _LOGGER.debug(
-                        "WiiM playPromptUrl returned %r; falling back to media_player", resp
-                    )
-
             if not self._media_player:
                 return
-            await self.hass.services.async_call(
-                "media_player",
-                "play_media",
-                {
-                    "entity_id": self._media_player,
-                    "media_content_id": media_url,
-                    "media_content_type": "music",
-                    "announce": True,
-                },
-                blocking=True,
-            )
+            try:
+                await self.hass.services.async_call(
+                    "media_player",
+                    "play_media",
+                    {
+                        "entity_id": self._media_player,
+                        "media_content_id": media_url,
+                        "media_content_type": "music",
+                        "announce": True,
+                    },
+                    blocking=True,
+                )
+            except Exception as first_err:
+                _LOGGER.debug(
+                    "play_media with announce=True failed on %s (%s); retrying without announce",
+                    self._media_player,
+                    first_err,
+                )
+                await self.hass.services.async_call(
+                    "media_player",
+                    "play_media",
+                    {
+                        "entity_id": self._media_player,
+                        "media_content_id": media_url,
+                        "media_content_type": "music",
+                    },
+                    blocking=True,
+                )
         except Exception as err:
-            _LOGGER.warning("Failed to play TTS: %s", err)
+            _LOGGER.warning("Failed to play TTS on %s: %s", self._media_player, err)
         finally:
             await self._async_restore_mute()
             self.tts_response_finished()
