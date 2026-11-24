@@ -159,6 +159,14 @@ class WiiMRemoteClient:
         self._client = client
 
         try:
+            try:
+                await client.pair()
+                _LOGGER.debug("BLE pair() succeeded for %s", self.mac_address)
+            except NotImplementedError:
+                pass
+            except Exception as pair_err:
+                _LOGGER.debug("BLE pair() note for %s: %s", self.mac_address, pair_err)
+
             consumer_char = None
             kbd_char = None
             voice_char = None

@@ -1,9 +1,19 @@
 {
   "config": {
     "step": {
+      "bluetooth_confirm": {
+        "title": "Pair WiiM Voice Remote",
+        "description": "Found **{name}** (`{mac}`). Make sure the remote is in pairing mode (hold Source + Mute for 2-3s) and submit to pair and configure.",
+        "data": {
+          "name": "Satellite Name",
+          "media_player": "Target Media Player (for TTS & media keys)",
+          "wiim_ip": "WiiM IP Address (optional, for Preset 1-4 buttons)",
+          "mute_on_voice": "Mute target media player while speaking"
+        }
+      },
       "user": {
         "title": "WiiM Voice Remote",
-        "description": "Configure your paired WiiM Voice Remote (BLE HID) as a Push-to-Talk Home Assistant Assist Satellite.",
+        "description": "Hold Source + Mute on your WiiM Voice Remote for 2-3 seconds to enter pairing mode, then select it from the list or enter its Bluetooth MAC address.",
         "data": {
           "mac_address": "Bluetooth MAC Address",
           "name": "Satellite Name",

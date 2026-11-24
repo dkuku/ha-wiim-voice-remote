@@ -1,9 +1,19 @@
 {
   "config": {
     "step": {
+      "bluetooth_confirm": {
+        "title": "Sparuj WiiM Voice Remote",
+        "description": "Znaleziono **{name}** (`{mac}`). Upewnij się, że pilot jest w trybie parowania (przytrzymaj Source + Mute przez 2–3 s) i zatwierdź, aby sparować i skonfigurować.",
+        "data": {
+          "name": "Nazwa satelity",
+          "media_player": "Docelowy odtwarzacz (dla TTS i przycisków multimedialnych)",
+          "wiim_ip": "Adres IP WiiM (opcjonalnie, dla przycisków Preset 1-4)",
+          "mute_on_voice": "Wycisz docelowy odtwarzacz podczas mówienia"
+        }
+      },
       "user": {
         "title": "WiiM Voice Remote",
-        "description": "Skonfiguruj sparowanego pilota WiiM Voice Remote (BLE HID) jako satelitę głosowego Home Assistant Assist (Push-to-Talk).",
+        "description": "Przytrzymaj Source + Mute na pilocie przez 2–3 s (tryb parowania), a następnie wybierz go z listy lub wpisz adres MAC Bluetooth.",
         "data": {
           "mac_address": "Adres MAC Bluetooth pilota",
           "name": "Nazwa satelity",
