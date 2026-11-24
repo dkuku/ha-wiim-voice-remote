@@ -172,10 +172,38 @@ class WiiMRemoteClient:
             level = max(0, min(100, int(data[0])))
             self._on_battery(level)
 
-    async def _connect_and_subscribe(self) -> None:
-        ble_device = bluetooth.async_ble_device_from_address(
+    def _select_ble_device(self):
+        """Prefer a local BlueZ adapter over ESPHome Bluetooth Proxies (BLE HID bonding requires BlueZ)."""
+        try:
+            scanner_devices = bluetooth.async_scanner_devices_by_address(
+                self.hass, self.mac_address, connectable=True
+            )
+            if scanner_devices:
+                # Local BlueZ adapters have details with a D-Bus '/org/bluez/' path
+                local_devs = [
+                    sd
+                    for sd in scanner_devices
+                    if isinstance(sd.ble_device.details, dict)
+                    and str(sd.ble_device.details.get("path", "")).startswith("/org/bluez/")
+                ]
+                chosen = local_devs[0] if local_devs else scanner_devices[0]
+                _LOGGER.debug(
+                    "Selected scanner %s for %s (local_bluez=%s, total_scanners=%d)",
+                    chosen.scanner.source,
+                    self.mac_address,
+                    bool(local_devs),
+                    len(scanner_devices),
+                )
+                return chosen.ble_device
+        except Exception as err:
+            _LOGGER.debug("async_scanner_devices_by_address fallback: %s", err)
+
+        return bluetooth.async_ble_device_from_address(
             self.hass, self.mac_address, connectable=True
         )
+
+    async def _connect_and_subscribe(self) -> None:
+        ble_device = self._select_ble_device()
         if ble_device is None:
             _LOGGER.debug(
                 "WiiM Voice Remote %s not currently visible to HA Bluetooth; waiting for button press or Source+Mute...",
