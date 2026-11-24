@@ -1,0 +1,12 @@
+[Unit]
+Description=WiiM Voice Remote Wyoming Satellite for Home Assistant
+After=network-online.target bluetooth.target sound.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/kuku/Projects/wiim-voice-satellite/wiim_wyoming_satellite.py --mac 7B:B7:0E:04:5E:6A --wiim-ip 192.168.1.176 --port 10700
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

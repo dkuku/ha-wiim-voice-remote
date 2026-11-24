@@ -1,0 +1,12 @@
+{
+  "domain": "wiim_voice_remote",
+  "name": "WiiM Voice Remote",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["assist_satellite", "bluetooth"],
+  "documentation": "https://github.com/OWNER/ha-wiim-voice-remote",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/OWNER/ha-wiim-voice-remote/issues",
+  "requirements": ["bleak>=0.22.0", "bleak-retry-connector>=3.5.0"],
+  "version": "0.1.0"
+}

@@ -1,0 +1,2 @@
+# Ignore WiiM Voice Remote (2717:32b9) in desktop/libinput so Volume/Keys don't control the Linux host
+SUBSYSTEM=="input", ATTRS{name}=="WiiM Voice Remote*", ENV{LIBINPUT_IGNORE_DEVICE}="1"

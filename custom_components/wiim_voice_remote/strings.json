@@ -1,0 +1,33 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "WiiM Voice Remote",
+        "description": "Configure your paired WiiM Voice Remote (BLE HID) as a Push-to-Talk Home Assistant Assist Satellite.",
+        "data": {
+          "mac_address": "Bluetooth MAC Address",
+          "name": "Satellite Name",
+          "media_player": "Target Media Player (for TTS & media keys)",
+          "wiim_ip": "WiiM IP Address (optional, for Preset 1-4 buttons)"
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "Invalid Bluetooth MAC address (expected AA:BB:CC:DD:EE:FF)."
+    },
+    "abort": {
+      "already_configured": "This WiiM Voice Remote is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "WiiM Voice Remote Options",
+        "data": {
+          "media_player": "Target Media Player (for TTS & media keys)",
+          "wiim_ip": "WiiM IP Address (optional, for Preset 1-4 buttons)"
+        }
+      }
+    }
+  }
+}
