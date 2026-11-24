@@ -240,11 +240,45 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
         if self._media_player and announcement.media_id:
             await self._play_tts_url(announcement.media_id)
 
+    async def _wait_for_tts_end(self, entity_id: str) -> None:
+        """Wait for the media_player to finish playing the TTS audio."""
+        # Give the player up to 3s to enter 'playing'
+        for _ in range(15):
+            st = self.hass.states.get(entity_id)
+            if st and st.state == "playing":
+                break
+            await asyncio.sleep(0.2)
+        else:
+            # Never reported 'playing' (some players stay idle/paused); brief pause
+            await asyncio.sleep(2.5)
+            return
+
+        # Wait up to 25s for TTS playback to finish
+        for _ in range(125):
+            st = self.hass.states.get(entity_id)
+            if not st or st.state != "playing":
+                break
+            await asyncio.sleep(0.2)
+
     async def _play_tts_url(self, media_url: str) -> None:
+        prev_state_name: str | None = None
+        prev_source: str | None = None
+        prev_content_id: str | None = None
+        prev_content_type: str | None = None
+
         try:
             await self._async_restore_mute()
             if not self._media_player:
                 return
+
+            # Snapshot current playback state before interrupting with TTS
+            snap = self.hass.states.get(self._media_player)
+            if snap:
+                prev_state_name = snap.state
+                prev_source = snap.attributes.get("source")
+                prev_content_id = snap.attributes.get("media_content_id")
+                prev_content_type = snap.attributes.get("media_content_type")
+
             try:
                 await self.hass.services.async_call(
                     "media_player",
@@ -273,11 +307,77 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
                     },
                     blocking=True,
                 )
+
+            # Wait for TTS to finish, then restore previous source / playback
+            await self._wait_for_tts_end(self._media_player)
+            await self._async_restore_playback(
+                prev_state_name, prev_source, prev_content_id, prev_content_type
+            )
         except Exception as err:
             _LOGGER.warning("Failed to play TTS on %s: %s", self._media_player, err)
         finally:
             await self._async_restore_mute()
             self.tts_response_finished()
+
+    async def _async_restore_playback(
+        self,
+        prev_state: str | None,
+        prev_source: str | None,
+        prev_content_id: str | None,
+        prev_content_type: str | None,
+    ) -> None:
+        if not self._media_player:
+            return
+        try:
+            cur = self.hass.states.get(self._media_player)
+            cur_source = cur.attributes.get("source") if cur else None
+
+            # Restore physical/different source (e.g. HDMI, Optical, Line-In, Bluetooth)
+            if prev_source and prev_source != cur_source:
+                _LOGGER.debug(
+                    "Restoring source %r on %s", prev_source, self._media_player
+                )
+                await self.hass.services.async_call(
+                    "media_player",
+                    "select_source",
+                    {"entity_id": self._media_player, "source": prev_source},
+                    blocking=True,
+                )
+                return
+
+            if prev_state != "playing":
+                return
+
+            # Resume previous URL/radio stream if available, otherwise press play
+            if (
+                prev_content_id
+                and isinstance(prev_content_id, str)
+                and prev_content_id.startswith(("http://", "https://", "media-source://"))
+                and "/api/tts_proxy/" not in prev_content_id
+            ):
+                _LOGGER.debug(
+                    "Restoring media URL on %s: %s", self._media_player, prev_content_id
+                )
+                await self.hass.services.async_call(
+                    "media_player",
+                    "play_media",
+                    {
+                        "entity_id": self._media_player,
+                        "media_content_id": prev_content_id,
+                        "media_content_type": prev_content_type or "music",
+                    },
+                    blocking=True,
+                )
+            else:
+                _LOGGER.debug("Resuming playback via media_play on %s", self._media_player)
+                await self.hass.services.async_call(
+                    "media_player",
+                    "media_play",
+                    {"entity_id": self._media_player},
+                    blocking=True,
+                )
+        except Exception as err:
+            _LOGGER.debug("Could not restore playback on %s: %s", self._media_player, err)
 
     def _on_button(self, button: str) -> None:
         """Fire HA event and optionally forward media/preset buttons to media_player or WiiM IP."""
