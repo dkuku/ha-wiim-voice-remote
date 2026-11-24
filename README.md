@@ -19,12 +19,11 @@ Turn your **WiiM Voice Remote** (BLE HID `2717:32b9`) into a native **Home Assis
 
 ## Installation via HACS
 
-1. Push this repository to GitHub (or use your fork URL).
-2. In Home Assistant, open **HACS → Integrations → ⋮ → Custom repositories**.
-3. Add the repository URL and select **Integration** as the category.
-4. Search for **WiiM Voice Remote**, click **Download**, and restart Home Assistant.
-5. Pair your WiiM Voice Remote to your Home Assistant Linux host via Bluetooth (hold **Source + Mute** for ~2–3 seconds to enter pairing mode).
-6. Go to **Settings → Devices & Services → Add Integration → WiiM Voice Remote**:
+1. In Home Assistant, open **HACS → Integrations → ⋮ → Custom repositories**.
+2. Add `https://github.com/dkuku/ha-wiim-voice-remote` and select **Integration** as the category.
+3. Search for **WiiM Voice Remote**, click **Download**, and restart Home Assistant.
+4. Pair your WiiM Voice Remote to your Home Assistant Linux host via Bluetooth (hold **Source + Mute** for ~2–3 seconds to enter pairing mode).
+5. Go to **Settings → Devices & Services → Add Integration → WiiM Voice Remote**:
    - Enter the remote's **Bluetooth MAC address** (auto-filled if discovered),
    - Optionally select a **Target Media Player** (for TTS playback and Volume/Play/Next/Prev forwarding),
    - Optionally enter your **WiiM IP address** (for Preset 1–4 buttons).
