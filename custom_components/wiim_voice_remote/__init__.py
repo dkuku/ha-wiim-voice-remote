@@ -6,7 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-PLATFORMS: list[Platform] = [Platform.SELECT, Platform.ASSIST_SATELLITE]
+PLATFORMS: list[Platform] = [Platform.SELECT, Platform.SENSOR, Platform.ASSIST_SATELLITE]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

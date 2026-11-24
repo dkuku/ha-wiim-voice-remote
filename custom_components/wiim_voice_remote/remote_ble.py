@@ -28,6 +28,7 @@ from .const import (
     REPORT_REF_CONSUMER,
     REPORT_REF_KEYBOARD,
     REPORT_REF_VOICE_ADPCM,
+    UUID_BATTERY_LEVEL,
     UUID_HID_REPORT,
     UUID_REPORT_REF,
 )
@@ -55,6 +56,7 @@ class WiiMRemoteClient:
         on_voice_pcm: Callable[[bytes], None],
         on_voice_stop: Callable[[], None],
         on_button: Callable[[str], None],
+        on_battery: Callable[[int], None] | None = None,
     ) -> None:
         self.hass = hass
         self.mac_address = mac_address.upper()
@@ -62,6 +64,7 @@ class WiiMRemoteClient:
         self._on_voice_pcm = on_voice_pcm
         self._on_voice_stop = on_voice_stop
         self._on_button = on_button
+        self._on_battery = on_battery
 
         self._client: BleakClient | None = None
         self._task: asyncio.Task | None = None
@@ -138,6 +141,11 @@ class WiiMRemoteClient:
         if pcm:
             self._on_voice_pcm(pcm)
 
+    def _on_battery_notify(self, _char: BleakGATTCharacteristic, data: bytearray) -> None:
+        if data and self._on_battery:
+            level = max(0, min(100, int(data[0])))
+            self._on_battery(level)
+
     async def _connect_and_subscribe(self) -> None:
         ble_device = bluetooth.async_ble_device_from_address(
             self.hass, self.mac_address, connectable=True
@@ -174,10 +182,15 @@ class WiiMRemoteClient:
             consumer_char = None
             kbd_char = None
             voice_char = None
+            battery_char = None
 
             for service in client.services:
                 for char in service.characteristics:
-                    if char.uuid.lower() != UUID_HID_REPORT:
+                    cuuid = char.uuid.lower()
+                    if cuuid == UUID_BATTERY_LEVEL:
+                        battery_char = char
+                        continue
+                    if cuuid != UUID_HID_REPORT:
                         continue
                     for desc in char.descriptors:
                         if desc.uuid.lower() == UUID_REPORT_REF:
@@ -188,6 +201,15 @@ class WiiMRemoteClient:
                                 kbd_char = char
                             elif ref == REPORT_REF_VOICE_ADPCM:
                                 voice_char = char
+
+            if battery_char and self._on_battery:
+                try:
+                    raw_bat = await client.read_gatt_char(battery_char)
+                    if raw_bat:
+                        self._on_battery(max(0, min(100, int(raw_bat[0]))))
+                    await client.start_notify(battery_char, self._on_battery_notify)
+                except Exception as bat_err:
+                    _LOGGER.debug("Battery read/notify error for %s: %s", self.mac_address, bat_err)
 
             if not voice_char:
                 _LOGGER.warning(

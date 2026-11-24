@@ -23,6 +23,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.network import get_url
 
@@ -36,6 +37,7 @@ from .const import (
     DEFAULT_NAME,
     DOMAIN,
     EVENT_BUTTON,
+    SIGNAL_BATTERY,
 )
 from .remote_ble import WiiMRemoteClient
 
@@ -101,6 +103,14 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
             on_voice_pcm=self._on_voice_pcm,
             on_voice_stop=self._on_voice_stop,
             on_button=self._on_button,
+            on_battery=self._on_battery,
+        )
+
+    def _on_battery(self, level: int) -> None:
+        async_dispatcher_send(
+            self.hass,
+            SIGNAL_BATTERY.format(mac=self._mac),
+            level,
         )
 
     @property
