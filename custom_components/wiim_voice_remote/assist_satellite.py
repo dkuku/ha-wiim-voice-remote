@@ -20,7 +20,7 @@ from homeassistant.components.assist_satellite import (
     AssistSatelliteEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -112,7 +112,8 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
     def vad_sensitivity_entity_id(self) -> str | None:
         return None
 
-    async def async_get_configuration(self) -> AssistSatelliteConfiguration:
+    @callback
+    def async_get_configuration(self) -> AssistSatelliteConfiguration:
         return AssistSatelliteConfiguration(
             available_wake_words=[],
             active_wake_words=[],
