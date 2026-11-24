@@ -21,6 +21,7 @@ from homeassistant.components.assist_satellite import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -75,7 +76,8 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
         )
         self._muted_by_us = False
 
-        self._attr_unique_id = f"wiim_voice_remote_{self._mac.replace(':', '').lower()}"
+        self._unique_prefix = f"wiim_voice_remote_{self._mac.replace(':', '').lower()}"
+        self._attr_unique_id = self._unique_prefix
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, self._mac)},
             connections={(CONNECTION_BLUETOOTH, self._mac)},
@@ -101,8 +103,10 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
 
     @property
     def pipeline_entity_id(self) -> str | None:
-        """Use the preferred Assist pipeline configured in Home Assistant."""
-        return None
+        """Return the select entity ID that picks the Assist pipeline."""
+        return er.async_get(self.hass).async_get_entity_id(
+            "select", DOMAIN, f"{self._unique_prefix}-pipeline"
+        )
 
     @property
     def vad_sensitivity_entity_id(self) -> str | None:
