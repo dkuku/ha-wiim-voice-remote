@@ -8,7 +8,8 @@
           "mac_address": "Adres MAC Bluetooth pilota",
           "name": "Nazwa satelity",
           "media_player": "Docelowy odtwarzacz (dla TTS i przycisków multimedialnych)",
-          "wiim_ip": "Adres IP WiiM (opcjonalnie, dla przycisków Preset 1-4)"
+          "wiim_ip": "Adres IP WiiM (opcjonalnie, dla przycisków Preset 1-4)",
+          "mute_on_voice": "Wycisz docelowy odtwarzacz podczas mówienia"
         }
       }
     },
@@ -25,7 +26,8 @@
         "title": "Opcje WiiM Voice Remote",
         "data": {
           "media_player": "Docelowy odtwarzacz (dla TTS i przycisków multimedialnych)",
-          "wiim_ip": "Adres IP WiiM (opcjonalnie, dla przycisków Preset 1-4)"
+          "wiim_ip": "Adres IP WiiM (opcjonalnie, dla przycisków Preset 1-4)",
+          "mute_on_voice": "Wycisz docelowy odtwarzacz podczas mówienia"
         }
       }
     }

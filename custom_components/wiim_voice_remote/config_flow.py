@@ -15,8 +15,10 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_MAC_ADDRESS,
     CONF_MEDIA_PLAYER,
+    CONF_MUTE_ON_VOICE,
     CONF_NAME,
     CONF_WIIM_IP,
+    DEFAULT_MUTE_ON_VOICE,
     DEFAULT_NAME,
     DOMAIN,
 )
@@ -48,6 +50,9 @@ class WiiMVoiceRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_NAME: user_input.get(CONF_NAME) or DEFAULT_NAME,
                     CONF_MEDIA_PLAYER: user_input.get(CONF_MEDIA_PLAYER) or None,
                     CONF_WIIM_IP: (user_input.get(CONF_WIIM_IP) or "").strip() or None,
+                    CONF_MUTE_ON_VOICE: bool(
+                        user_input.get(CONF_MUTE_ON_VOICE, DEFAULT_MUTE_ON_VOICE)
+                    ),
                 }
                 return self.async_create_entry(title=data[CONF_NAME], data=data)
 
@@ -68,6 +73,7 @@ class WiiMVoiceRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.EntitySelectorConfig(domain="media_player")
                 ),
                 vol.Optional(CONF_WIIM_IP, default=""): str,
+                vol.Optional(CONF_MUTE_ON_VOICE, default=DEFAULT_MUTE_ON_VOICE): bool,
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
@@ -95,6 +101,9 @@ class WiiMVoiceRemoteOptionsFlow(config_entries.OptionsFlow):
                 data={
                     CONF_MEDIA_PLAYER: user_input.get(CONF_MEDIA_PLAYER) or None,
                     CONF_WIIM_IP: (user_input.get(CONF_WIIM_IP) or "").strip() or None,
+                    CONF_MUTE_ON_VOICE: bool(
+                        user_input.get(CONF_MUTE_ON_VOICE, DEFAULT_MUTE_ON_VOICE)
+                    ),
                 },
             )
 
@@ -107,6 +116,12 @@ class WiiMVoiceRemoteOptionsFlow(config_entries.OptionsFlow):
             )
             or ""
         )
+        current_mute = bool(
+            self._config_entry.options.get(
+                CONF_MUTE_ON_VOICE,
+                self._config_entry.data.get(CONF_MUTE_ON_VOICE, DEFAULT_MUTE_ON_VOICE),
+            )
+        )
 
         schema = vol.Schema(
             {
@@ -116,6 +131,7 @@ class WiiMVoiceRemoteOptionsFlow(config_entries.OptionsFlow):
                     selector.EntitySelectorConfig(domain="media_player")
                 ),
                 vol.Optional(CONF_WIIM_IP, default=current_ip): str,
+                vol.Optional(CONF_MUTE_ON_VOICE, default=current_mute): bool,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

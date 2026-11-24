@@ -8,7 +8,8 @@
           "mac_address": "Bluetooth MAC Address",
           "name": "Satellite Name",
           "media_player": "Target Media Player (for TTS & media keys)",
-          "wiim_ip": "WiiM IP Address (optional, for Preset 1-4 buttons)"
+          "wiim_ip": "WiiM IP Address (optional, for Preset 1-4 buttons)",
+          "mute_on_voice": "Mute target media player while speaking"
         }
       }
     },
@@ -25,7 +26,8 @@
         "title": "WiiM Voice Remote Options",
         "data": {
           "media_player": "Target Media Player (for TTS & media keys)",
-          "wiim_ip": "WiiM IP Address (optional, for Preset 1-4 buttons)"
+          "wiim_ip": "WiiM IP Address (optional, for Preset 1-4 buttons)",
+          "mute_on_voice": "Mute target media player while speaking"
         }
       }
     }

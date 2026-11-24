@@ -27,8 +27,10 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import (
     CONF_MAC_ADDRESS,
     CONF_MEDIA_PLAYER,
+    CONF_MUTE_ON_VOICE,
     CONF_NAME,
     CONF_WIIM_IP,
+    DEFAULT_MUTE_ON_VOICE,
     DEFAULT_NAME,
     DOMAIN,
     EVENT_BUTTON,
@@ -65,6 +67,13 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
         self._wiim_ip: str | None = entry.options.get(
             CONF_WIIM_IP, entry.data.get(CONF_WIIM_IP)
         )
+        self._mute_on_voice: bool = bool(
+            entry.options.get(
+                CONF_MUTE_ON_VOICE,
+                entry.data.get(CONF_MUTE_ON_VOICE, DEFAULT_MUTE_ON_VOICE),
+            )
+        )
+        self._muted_by_us = False
 
         self._attr_unique_id = f"wiim_voice_remote_{self._mac.replace(':', '').lower()}"
         self._attr_device_info = DeviceInfo(
@@ -116,8 +125,39 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
         self._ble.start()
 
     async def async_will_remove_from_hass(self) -> None:
+        await self._async_restore_mute()
         await self._ble.async_stop()
         await super().async_will_remove_from_hass()
+
+    async def _async_mute_for_voice(self) -> None:
+        if not self._mute_on_voice or not self._media_player or self._muted_by_us:
+            return
+        state = self.hass.states.get(self._media_player)
+        if state and state.attributes.get("is_volume_muted"):
+            return
+        self._muted_by_us = True
+        try:
+            await self.hass.services.async_call(
+                "media_player",
+                "volume_mute",
+                {"entity_id": self._media_player, "is_volume_muted": True},
+            )
+        except Exception as err:
+            self._muted_by_us = False
+            _LOGGER.debug("Failed to mute %s: %s", self._media_player, err)
+
+    async def _async_restore_mute(self) -> None:
+        if not self._muted_by_us or not self._media_player:
+            return
+        self._muted_by_us = False
+        try:
+            await self.hass.services.async_call(
+                "media_player",
+                "volume_mute",
+                {"entity_id": self._media_player, "is_volume_muted": False},
+            )
+        except Exception as err:
+            _LOGGER.debug("Failed to unmute %s: %s", self._media_player, err)
 
     async def _audio_stream(self, queue: asyncio.Queue[bytes | None]) -> AsyncIterable[bytes]:
         while True:
@@ -131,6 +171,7 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
         if self._audio_queue is not None:
             self._audio_queue.put_nowait(None)
 
+        self.hass.async_create_task(self._async_mute_for_voice())
         queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._audio_queue = queue
         self._pipeline_task = self.hass.async_create_task(
@@ -158,6 +199,7 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
             )
         except Exception as err:
             _LOGGER.warning("Assist pipeline failed for %s: %s", self._mac, err)
+            await self._async_restore_mute()
             self.tts_response_finished()
 
     def on_pipeline_event(self, event: PipelineEvent) -> None:
@@ -168,9 +210,14 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
             if media_url and self._media_player:
                 self.hass.async_create_task(self._play_tts_url(media_url))
             else:
+                self.hass.async_create_task(self._async_restore_mute())
                 self.tts_response_finished()
-        elif event.type == PipelineEventType.ERROR:
-            self.tts_response_finished()
+        elif event.type in (PipelineEventType.ERROR, PipelineEventType.RUN_END):
+            if event.type == PipelineEventType.ERROR:
+                self.hass.async_create_task(self._async_restore_mute())
+                self.tts_response_finished()
+            elif not self._media_player:
+                self.hass.async_create_task(self._async_restore_mute())
 
     async def async_announce(self, announcement: AssistSatelliteAnnouncement) -> None:
         """Play an announcement via the configured media_player."""
@@ -181,6 +228,7 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
         try:
             if not self._media_player:
                 return
+            await self._async_restore_mute()
             await self.hass.services.async_call(
                 "media_player",
                 "play_media",
@@ -195,6 +243,7 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
         except Exception as err:
             _LOGGER.warning("Failed to play TTS on %s: %s", self._media_player, err)
         finally:
+            await self._async_restore_mute()
             self.tts_response_finished()
 
     def _on_button(self, button: str) -> None:

@@ -6,8 +6,10 @@ CONF_MAC_ADDRESS = "mac_address"
 CONF_MEDIA_PLAYER = "media_player"
 CONF_WIIM_IP = "wiim_ip"
 CONF_NAME = "name"
+CONF_MUTE_ON_VOICE = "mute_on_voice"
 
 DEFAULT_NAME = "WiiM Voice Remote"
+DEFAULT_MUTE_ON_VOICE = True
 
 # BLE HID GATT UUIDs
 UUID_HID_SERVICE = "00001812-0000-1000-8000-00805f9b34fb"
