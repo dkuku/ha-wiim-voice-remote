@@ -5,10 +5,15 @@ Turn your **WiiM Voice Remote** (BLE HID `2717:32b9`) into a native **Home Assis
 ## Features
 - **Native `assist_satellite` entity** in Home Assistant (works with any Assist Pipeline: Whisper, Piper, OpenAI, Gemini, etc.).
 - **Push-to-Talk over BLE:** Hold the microphone button to speak, release to send. Decodes the remote's 131-byte IMA ADPCM (16 kHz, 16-bit mono) BLE HID Report 3 stream on the fly.
-- **TTS Playback on your WiiM / Media Player:** Optionally route Assistant TTS responses directly to any `media_player` entity (e.g. your WiiM Amp Pro via `mjcumming/wiim`).
+- **Auto-mute while speaking (`mute_on_voice`):** Automatically mutes the target `media_player` while holding the Voice button and restores audio before TTS playback.
+- **TTS Playback on your WiiM / Media Player:** Optionally route Assistant TTS responses directly to any `media_player` entity (e.g. your WiiM Amp Pro via `mjcumming/wiim`, Amazon Echo, etc.).
 - **Media & Preset Key Forwarding:** Volume +/-, Mute, Play/Pause, Next, Previous are forwarded to the configured `media_player`, and Presets 1–4 can trigger `MCUKeyShortClick:1..4` on your WiiM IP.
 - **Home Assistant Events:** Every button press also fires a `wiim_voice_remote_button` event on the HA event bus for custom automations.
 - **Companion Wyoming Satellite (`companion/`):** If your Home Assistant host does not have Bluetooth in the room with the remote, run the standalone Linux Wyoming Satellite daemon included in `companion/`.
+
+## Compatibility
+- **Tested with:** **WiiM Amp Pro** + **WiiM Voice Remote** (`2717:32b9`, Belon/Realtek BLE HID).
+- **Expected to work with:** Any WiiM Voice Remote shipped with WiiM Mini, Pro, Pro Plus, Amp, Amp Pro, or Ultra (as well as standalone usage with any Home Assistant `media_player`).
 
 ---
 
