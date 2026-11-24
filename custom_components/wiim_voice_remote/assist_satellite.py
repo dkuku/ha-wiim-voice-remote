@@ -25,6 +25,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.network import get_url
 
 from .const import (
     CONF_MAC_ADDRESS,
@@ -297,13 +298,22 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
                     prev_content_id,
                 )
 
+            full_url = media_url
+            if full_url.startswith("/"):
+                try:
+                    base_url = get_url(self.hass, prefer_external=False)
+                    full_url = f"{base_url.rstrip('/')}{full_url}"
+                except Exception as url_err:
+                    _LOGGER.debug("Could not resolve local HA URL: %s", url_err)
+
+            _LOGGER.debug("Playing TTS on %s: %s", self._media_player, full_url)
             try:
                 await self.hass.services.async_call(
                     "media_player",
                     "play_media",
                     {
                         "entity_id": self._media_player,
-                        "media_content_id": media_url,
+                        "media_content_id": full_url,
                         "media_content_type": "music",
                         "announce": True,
                     },
@@ -320,7 +330,7 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
                     "play_media",
                     {
                         "entity_id": self._media_player,
-                        "media_content_id": media_url,
+                        "media_content_id": full_url,
                         "media_content_type": "music",
                     },
                     blocking=True,
