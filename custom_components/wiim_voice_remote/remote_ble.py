@@ -14,6 +14,7 @@ from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 
 from .adpcm import decode_wiim_adpcm_packet
+from .bluez_pair import async_bluez_pair_and_trust
 from .const import (
     KBD_PRESETS,
     KEY_MUTE,
@@ -147,6 +148,9 @@ class WiiMRemoteClient:
                 self.mac_address,
             )
             return
+
+        # Ensure BLE HID bonding via BlueZ NoInputNoOutput agent if running on local BlueZ
+        await async_bluez_pair_and_trust(self.mac_address)
 
         self._disconnected_event.clear()
         client = await establish_connection(

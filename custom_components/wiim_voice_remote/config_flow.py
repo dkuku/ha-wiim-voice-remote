@@ -16,6 +16,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
+from .bluez_pair import async_bluez_pair_and_trust
 from .const import (
     CONF_MAC_ADDRESS,
     CONF_MEDIA_PLAYER,
@@ -44,7 +45,9 @@ class WiiMVoiceRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._discovered_name: str | None = None
 
     async def _try_pair(self, mac: str) -> None:
-        """Best-effort BLE pairing during setup if the remote is visible."""
+        """Best-effort BLE pairing during setup (BlueZ NoInputNoOutput agent first, then Bleak)."""
+        if await async_bluez_pair_and_trust(mac):
+            return
         ble_device = bluetooth.async_ble_device_from_address(
             self.hass, mac, connectable=True
         )
