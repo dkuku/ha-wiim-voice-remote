@@ -90,6 +90,7 @@ class WiiMRemoteClient:
         self._kbd_path: str | None = None
         self._voice_path: str | None = None
         self._battery_path: str | None = None
+        self._bluez_subscribed = False
 
     def start(self) -> None:
         """Start background listener task."""
@@ -198,7 +199,7 @@ class WiiMRemoteClient:
 
     # ---- Native BlueZ D-Bus transport ----
 
-    async def _bluez_subscribe_all(self, bus) -> bool:
+    async def _bluez_subscribe_all(self, bus, try_connect: bool = False) -> bool:
         """Discover HID/Battery characteristics in BlueZ and call StartNotify."""
         root_intro = await bus.introspect("org.bluez", "/")
         root_proxy = bus.get_proxy_object("org.bluez", "/", root_intro)
@@ -229,29 +230,37 @@ class WiiMRemoteClient:
         self._dev_path = dev_path
 
         if not paired:
+            if not try_connect:
+                return False
             paired = await async_bluez_pair_and_trust(self.mac_address)
             if not paired:
                 return False
 
         if not connected:
+            if not try_connect:
+                return False
             try:
                 dev_intro = await bus.introspect("org.bluez", dev_path)
                 dev_proxy = bus.get_proxy_object("org.bluez", dev_path, dev_intro)
                 dev_iface = dev_proxy.get_interface("org.bluez.Device1")
-                await asyncio.wait_for(dev_iface.call_connect(), timeout=6.0)
-                # Refresh managed objects after connect
+                await asyncio.wait_for(dev_iface.call_connect(), timeout=5.0)
                 managed = await obj_mgr.call_get_managed_objects()
                 props = managed.get(dev_path, {}).get("org.bluez.Device1", {})
+                connected = bool(props["Connected"].value) if "Connected" in props else False
                 resolved = (
                     bool(props["ServicesResolved"].value)
                     if "ServicesResolved" in props
                     else False
                 )
             except Exception as err:
-                _LOGGER.debug("BlueZ Connect(%s) waiting for remote wake: %s", self.mac_address, err)
+                _LOGGER.debug(
+                    "BlueZ Connect(%s) waiting for remote wake: %s",
+                    self.mac_address,
+                    repr(err),
+                )
                 return False
 
-        if not resolved:
+        if not connected or not resolved:
             return False
 
         self._consumer_path = None
@@ -329,6 +338,7 @@ class WiiMRemoteClient:
                     _LOGGER.debug("StartNotify %s failed: %s", label, err)
 
         _LOGGER.info("WiiM Voice Remote %s connected and ready (BlueZ)", self.mac_address)
+        self._bluez_subscribed = True
         return True
 
     async def _run_bluez_dbus(self) -> None:
@@ -337,7 +347,7 @@ class WiiMRemoteClient:
 
         bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
         try:
-            # Add D-Bus match rule for PropertiesChanged from org.bluez
+            # Broad match rule (compatible with both dbus-daemon and dbus-broker on HAOS)
             reply = await bus.call(
                 Message(
                     destination="org.freedesktop.DBus",
@@ -346,7 +356,7 @@ class WiiMRemoteClient:
                     member="AddMatch",
                     signature="s",
                     body=[
-                        "type='signal',sender='org.bluez',"
+                        "type='signal',"
                         "interface='org.freedesktop.DBus.Properties',"
                         "member='PropertiesChanged'"
                     ],
@@ -357,12 +367,14 @@ class WiiMRemoteClient:
 
             resubscribe_event = asyncio.Event()
             resubscribe_event.set()
+            self._bluez_subscribed = False
 
             def _on_message(msg: Message) -> None:
                 if (
                     msg.message_type != MessageType.SIGNAL
                     or msg.member != "PropertiesChanged"
                     or not msg.path
+                    or not msg.path.startswith("/org/bluez/")
                     or len(msg.body) < 2
                 ):
                     return
@@ -374,10 +386,12 @@ class WiiMRemoteClient:
                     if "Connected" in changed:
                         is_conn = bool(changed["Connected"].value)
                         _LOGGER.debug("WiiM Voice Remote %s Connected=%s", self.mac_address, is_conn)
-                        if not is_conn and self._voice_active:
-                            self._voice_active = False
-                            self._on_voice_stop()
-                        if is_conn:
+                        if not is_conn:
+                            self._bluez_subscribed = False
+                            if self._voice_active:
+                                self._voice_active = False
+                                self._on_voice_stop()
+                        else:
                             resubscribe_event.set()
                     if "ServicesResolved" in changed and bool(changed["ServicesResolved"].value):
                         resubscribe_event.set()
@@ -398,26 +412,31 @@ class WiiMRemoteClient:
             bus.add_message_handler(_on_message)
 
             while not self._stop_event.is_set():
-                if resubscribe_event.is_set() or self._wake_event.is_set():
-                    resubscribe_event.clear()
-                    self._wake_event.clear()
+                had_wake = self._wake_event.is_set()
+                had_resub = resubscribe_event.is_set()
+                resubscribe_event.clear()
+                self._wake_event.clear()
+
+                if not self._bluez_subscribed or had_resub or had_wake:
                     try:
-                        await self._bluez_subscribe_all(bus)
+                        await self._bluez_subscribe_all(bus, try_connect=had_wake)
                     except Exception as err:
                         _LOGGER.debug("BlueZ subscribe attempt error: %s", err)
 
-                # Wait for either a BlueZ signal, BLE advertisement, stop, or 10s heartbeat
+                # Poll every 2s while disconnected (catches BlueZ auto-reconnects), 15s while connected
+                timeout = 15.0 if self._bluez_subscribed else 2.0
                 wait_tasks = [
                     asyncio.create_task(resubscribe_event.wait()),
                     asyncio.create_task(self._wake_event.wait()),
                     asyncio.create_task(self._stop_event.wait()),
                 ]
                 done, pending = await asyncio.wait(
-                    wait_tasks, timeout=10.0, return_when=asyncio.FIRST_COMPLETED
+                    wait_tasks, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
                 )
                 for p in pending:
                     p.cancel()
         finally:
+            self._bluez_subscribed = False
             bus.disconnect()
 
     # ---- Bleak fallback transport ----
