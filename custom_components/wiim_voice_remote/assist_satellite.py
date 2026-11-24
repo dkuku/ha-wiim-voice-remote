@@ -314,7 +314,7 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
         prev_source: str | None = None
         prev_content_id: str | None = None
         prev_content_type: str | None = None
-        prev_wiim_queue: tuple[str, int] | None = None
+        prev_wiim_queue: tuple[str, str, int] | None = None
 
         try:
             await self._async_restore_mute()
@@ -383,7 +383,7 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
         prev_source: str | None,
         prev_content_id: str | None,
         prev_content_type: str | None,
-        prev_wiim_queue: tuple[str, int] | None = None,
+        prev_wiim_queue: tuple[str, str, int] | None = None,
     ) -> None:
         if not self._media_player:
             return
@@ -412,16 +412,17 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
             if prev_state != "playing" or prev_source == "URL Stream":
                 return
 
-            # Restore snapshotted WiiM UPnP CurrentQueue (restores vTuner radio, playlists, etc.)
+            # Restore snapshotted WiiM UPnP queue (restores vTuner radio, playlists, etc.)
             if self._wiim_ip and prev_wiim_queue is not None:
-                queue_xml, index = prev_wiim_queue
+                queue_xml, list_name, index = prev_wiim_queue
                 resumed = await self.hass.async_add_executor_job(
-                    self._wiim_restore_current_queue, queue_xml, index
+                    self._wiim_restore_current_queue, queue_xml, list_name, index
                 )
                 if resumed:
                     return
 
-            # Resume previous URL/radio stream if available, otherwise press play
+            # Resume previous URL/radio stream if available (never call bare media_play
+            # after TTS, as that would replay the TTS clip a second time).
             if (
                 prev_content_id
                 and isinstance(prev_content_id, str)
@@ -439,14 +440,6 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
                         "media_content_id": prev_content_id,
                         "media_content_type": prev_content_type or "music",
                     },
-                    blocking=True,
-                )
-            else:
-                _LOGGER.debug("Resuming playback via media_play on %s", self._media_player)
-                await self.hass.services.async_call(
-                    "media_player",
-                    "media_play",
-                    {"entity_id": self._media_player},
                     blocking=True,
                 )
         except Exception as err:
@@ -527,8 +520,8 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
             _LOGGER.debug("WiiM UPnP %s failed: %s", action, err)
             return None
 
-    def _wiim_snapshot_current_queue(self) -> tuple[str, int] | None:
-        """Snapshot WiiM UPnP CurrentQueue XML + LastPlayIndex before TTS clears it."""
+    def _wiim_snapshot_current_queue(self) -> tuple[str, str, int] | None:
+        """Snapshot WiiM UPnP CurrentQueue XML, ListName, and LastPlayIndex before TTS clears it."""
         raw = self._wiim_upnp_playqueue(
             "BrowseQueue", "<QueueName>CurrentQueue</QueueName>"
         )
@@ -542,32 +535,46 @@ class WiiMVoiceSatellite(AssistSatelliteEntity):
         total_m = re.search(r"<TotalNumber>(\d+)</TotalNumber>", unescaped)
         if not total_m or int(total_m.group(1)) <= 0:
             return None
+        name_m = re.search(r"<ListName>(.*?)</ListName>", unescaped)
+        list_name = name_m.group(1).strip() if name_m and name_m.group(1).strip() else "CurrentQueue"
         idx_m = re.search(r"<LastPlayIndex>(\d+)</LastPlayIndex>", unescaped)
         index = int(idx_m.group(1)) if idx_m and int(idx_m.group(1)) >= 1 else 1
         _LOGGER.debug(
-            "Snapshotted WiiM CurrentQueue (%d chars, index=%d)",
+            "Snapshotted WiiM CurrentQueue (%d chars, list=%r, index=%d)",
             len(escaped_xml),
+            list_name,
             index,
         )
-        return (escaped_xml, index)
+        return (escaped_xml, list_name, index)
 
-    def _wiim_restore_current_queue(self, escaped_queue_xml: str, index: int) -> bool:
-        """Restore a previously snapshotted WiiM UPnP CurrentQueue and resume it."""
+    def _wiim_restore_current_queue(
+        self, escaped_queue_xml: str, list_name: str, index: int
+    ) -> bool:
+        """Restore a previously snapshotted WiiM UPnP queue and resume it."""
         _LOGGER.debug(
-            "Restoring WiiM UPnP CurrentQueue (index=%d) on %s", index, self._wiim_ip
+            "Restoring WiiM UPnP queue %r (index=%d) on %s",
+            list_name,
+            index,
+            self._wiim_ip,
         )
-        # Try ReplaceQueue first, fall back to CreateQueue
+        # CreateQueue/ReplaceQueue stores the queue under its <ListName>
         resp = self._wiim_upnp_playqueue(
-            "ReplaceQueue", f"<QueueContext>{escaped_queue_xml}</QueueContext>"
+            "CreateQueue", f"<QueueContext>{escaped_queue_xml}</QueueContext>"
         )
         if resp is None:
             resp = self._wiim_upnp_playqueue(
-                "CreateQueue", f"<QueueContext>{escaped_queue_xml}</QueueContext>"
+                "ReplaceQueue", f"<QueueContext>{escaped_queue_xml}</QueueContext>"
             )
+        escaped_name = html.escape(list_name)
         play_resp = self._wiim_upnp_playqueue(
             "PlayQueueWithIndex",
-            f"<QueueName>CurrentQueue</QueueName><Index>{index}</Index>",
+            f"<QueueName>{escaped_name}</QueueName><Index>{index}</Index>",
         )
+        if play_resp is None and list_name != "CurrentQueue":
+            play_resp = self._wiim_upnp_playqueue(
+                "PlayQueueWithIndex",
+                f"<QueueName>CurrentQueue</QueueName><Index>{index}</Index>",
+            )
         return play_resp is not None
 
     def _call_wiim_http(self, command: str) -> str | None:
