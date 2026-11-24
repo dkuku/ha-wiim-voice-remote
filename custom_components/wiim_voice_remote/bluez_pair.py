@@ -1,8 +1,7 @@
 """Automatic BlueZ BLE pairing with a NoInputNoOutput Agent1 via dbus-fast."""
 
-from __future__ import annotations
-
 import logging
+from typing import Optional
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,44 +22,44 @@ async def async_bluez_pair_and_trust(mac_address: str) -> bool:
         _LOGGER.debug("dbus_fast not available; skipping direct BlueZ agent pairing")
         return False
 
-    class _NoInputNoOutputAgent(ServiceInterface):
-        def __init__(self) -> None:
-            super().__init__("org.bluez.Agent1")
-
-        @method()
-        def Release(self) -> None:
-            pass
-
-        @method()
-        def AuthorizeService(self, device: "o", uuid: "s") -> None:  # noqa: F821
-            pass
-
-        @method()
-        def RequestPinCode(self, device: "o") -> "s":  # noqa: F821
-            return "0000"
-
-        @method()
-        def RequestPasskey(self, device: "o") -> "u":  # noqa: F821
-            return 0
-
-        @method()
-        def RequestConfirmation(self, device: "o", passkey: "u") -> None:  # noqa: F821
-            pass
-
-        @method()
-        def RequestAuthorization(self, device: "o") -> None:  # noqa: F821
-            pass
-
-        @method()
-        def Cancel(self) -> None:
-            pass
-
     mac_suffix = f"/dev_{mac_address.upper().replace(':', '_')}"
     bus = None
     agent_mgr = None
     agent_registered = False
 
     try:
+        class _NoInputNoOutputAgent(ServiceInterface):
+            def __init__(self):
+                super().__init__("org.bluez.Agent1")
+
+            @method()
+            def Release(self):
+                pass
+
+            @method()
+            def AuthorizeService(self, device: "o", uuid: "s"):  # noqa: F821
+                pass
+
+            @method()
+            def RequestPinCode(self, device: "o") -> "s":  # noqa: F821
+                return "0000"
+
+            @method()
+            def RequestPasskey(self, device: "o") -> "u":  # noqa: F821
+                return 0
+
+            @method()
+            def RequestConfirmation(self, device: "o", passkey: "u"):  # noqa: F821
+                pass
+
+            @method()
+            def RequestAuthorization(self, device: "o"):  # noqa: F821
+                pass
+
+            @method()
+            def Cancel(self):
+                pass
+
         bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
 
         # Find the device path across any hci* adapter
@@ -69,7 +68,7 @@ async def async_bluez_pair_and_trust(mac_address: str) -> bool:
         obj_mgr = root_proxy.get_interface("org.freedesktop.DBus.ObjectManager")
         managed = await obj_mgr.call_get_managed_objects()
 
-        dev_path: str | None = None
+        dev_path: Optional[str] = None
         already_paired = False
         for path, ifaces in managed.items():
             if path.endswith(mac_suffix) and "org.bluez.Device1" in ifaces:
