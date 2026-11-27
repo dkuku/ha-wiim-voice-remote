@@ -230,7 +230,7 @@ class WiiMRemoteClient:
 
             try:
                 paired_ok = await bluez_session.async_pair_and_trust(client)
-                if not paired_ok and not bluez_session.was_paired:
+                if not paired_ok and not bluez_session.was_paired and not bluez_session.available:
                     try:
                         await client.pair()
                         _LOGGER.debug("BLE pair() succeeded for %s", self.mac_address)
@@ -250,6 +250,9 @@ class WiiMRemoteClient:
                             "(until the LED flashes rapidly) to put it into pairing mode.",
                             self.mac_address,
                         )
+
+                if not client.is_connected:
+                    return
 
                 consumer_char = None
                 kbd_char = None

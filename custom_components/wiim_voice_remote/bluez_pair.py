@@ -1,7 +1,5 @@
 """Automatic BlueZ BLE pairing with a NoInputNoOutput Agent1 via dbus-fast."""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any, Optional
@@ -19,11 +17,12 @@ class BlueZPairingSession:
         self.mac_suffix = f"/dev_{self.mac_address.replace(':', '_')}"
         self.was_paired = False
         self.auth_rejected = False
+        self.available = False
         self._bus: Any = None
         self._agent_mgr: Any = None
         self._agent_registered = False
 
-    async def __aenter__(self) -> BlueZPairingSession:
+    async def __aenter__(self) -> "BlueZPairingSession":
         try:
             from dbus_fast import BusType, Variant
             from dbus_fast.aio import MessageBus
@@ -33,16 +32,18 @@ class BlueZPairingSession:
             return self
 
         try:
+            # IMPORTANT: Do NOT put '-> None' on @method() functions in dbus_fast;
+            # dbus_fast expects no return annotation (or a D-Bus signature string like 's' or 'u').
             class _NoInputNoOutputAgent(ServiceInterface):
-                def __init__(self) -> None:
+                def __init__(self):
                     super().__init__("org.bluez.Agent1")
 
                 @method()
-                def Release(self) -> None:
+                def Release(self):
                     pass
 
                 @method()
-                def AuthorizeService(self, device: "o", uuid: "s") -> None:  # noqa: F821
+                def AuthorizeService(self, device: "o", uuid: "s"):  # noqa: F821
                     pass
 
                 @method()
@@ -50,7 +51,7 @@ class BlueZPairingSession:
                     return "0000"
 
                 @method()
-                def DisplayPinCode(self, device: "o", pincode: "s") -> None:  # noqa: F821
+                def DisplayPinCode(self, device: "o", pincode: "s"):  # noqa: F821
                     pass
 
                 @method()
@@ -58,22 +59,23 @@ class BlueZPairingSession:
                     return 0
 
                 @method()
-                def DisplayPasskey(self, device: "o", passkey: "u", entered: "q") -> None:  # noqa: F821
+                def DisplayPasskey(self, device: "o", passkey: "u", entered: "q"):  # noqa: F821
                     pass
 
                 @method()
-                def RequestConfirmation(self, device: "o", passkey: "u") -> None:  # noqa: F821
+                def RequestConfirmation(self, device: "o", passkey: "u"):  # noqa: F821
                     pass
 
                 @method()
-                def RequestAuthorization(self, device: "o") -> None:  # noqa: F821
+                def RequestAuthorization(self, device: "o"):  # noqa: F821
                     pass
 
                 @method()
-                def Cancel(self) -> None:
+                def Cancel(self):
                     pass
 
             self._bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+            self.available = True
 
             # Register NoInputNoOutput agent BEFORE connecting so BlueZ can handle both
             # peripheral-initiated SMP Security Requests and central-initiated Pair() calls.
@@ -103,7 +105,7 @@ class BlueZPairingSession:
             if dev_path:
                 await self._async_set_trusted(dev_path, Variant)
         except Exception as err:
-            _LOGGER.debug("BlueZ pairing session init note for %s: %s", self.mac_address, err)
+            _LOGGER.warning("BlueZ pairing session init error for %s: %s", self.mac_address, err)
 
         return self
 
