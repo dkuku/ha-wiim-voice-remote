@@ -16,7 +16,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
-from .bluez_pair import async_bluez_pair_and_trust
+from .bluez_pair import BlueZPairingSession
 from .const import (
     CONF_MAC_ADDRESS,
     CONF_MEDIA_PLAYER,
@@ -45,9 +45,7 @@ class WiiMVoiceRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._discovered_name: str | None = None
 
     async def _try_pair(self, mac: str) -> None:
-        """Best-effort BLE pairing during setup (BlueZ NoInputNoOutput agent first, then Bleak)."""
-        if await async_bluez_pair_and_trust(mac):
-            return
+        """Best-effort BLE pairing during setup with active BlueZ NoInputNoOutput agent."""
         ble_device = bluetooth.async_ble_device_from_address(
             self.hass, mac, connectable=True
         )
@@ -55,19 +53,23 @@ class WiiMVoiceRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return
         client: BleakClient | None = None
         try:
-            client = await establish_connection(
-                BleakClient,
-                ble_device,
-                name=f"WiiM Voice Remote ({mac})",
-                max_attempts=2,
-            )
-            try:
-                await client.pair()
-                _LOGGER.info("Paired WiiM Voice Remote %s during setup", mac)
-            except NotImplementedError:
-                pass
-            except Exception as err:
-                _LOGGER.debug("Pair during setup note for %s: %s", mac, err)
+            async with BlueZPairingSession(mac) as bluez_session:
+                client = await establish_connection(
+                    BleakClient,
+                    ble_device,
+                    name=f"WiiM Voice Remote ({mac})",
+                    max_attempts=2,
+                )
+                if await bluez_session.async_pair_and_trust(client):
+                    _LOGGER.info("Paired WiiM Voice Remote %s during setup", mac)
+                    return
+                try:
+                    await client.pair()
+                    _LOGGER.info("Paired WiiM Voice Remote %s during setup", mac)
+                except NotImplementedError:
+                    pass
+                except Exception as err:
+                    _LOGGER.debug("Pair during setup note for %s: %s", mac, err)
         except Exception as err:
             _LOGGER.debug("Could not pre-pair %s during setup: %s", mac, err)
         finally:

@@ -14,7 +14,7 @@ from homeassistant.components import bluetooth
 from homeassistant.core import HomeAssistant
 
 from .adpcm import decode_wiim_adpcm_packet
-from .bluez_pair import async_bluez_pair_and_trust, async_bluez_remove_device
+from .bluez_pair import BlueZPairingSession, async_bluez_remove_device
 from .const import (
     KBD_PRESETS,
     KEY_MUTE,
@@ -74,6 +74,8 @@ class WiiMRemoteClient:
         self._unsub_bt: Callable[[], None] | None = None
         self._voice_active = False
         self._consecutive_failures = 0
+        self._stale_bond_failures = 0
+        self._warned_needs_pairing_mode = False
 
     def start(self) -> None:
         """Start background connection loop and register instant BLE wake callback."""
@@ -212,74 +214,111 @@ class WiiMRemoteClient:
             )
             return
 
-        await async_bluez_pair_and_trust(self.mac_address)
-
         self._disconnected_event.clear()
-        client = await establish_connection(
-            BleakClient,
-            ble_device,
-            name=f"WiiM Voice Remote ({self.mac_address})",
-            disconnected_callback=self._handle_disconnect,
-            max_attempts=2,
-        )
-        self._client = client
+
+        # Keep the BlueZ NoInputNoOutput agent registered across establish_connection()
+        # AND post-connect pairing so BlueZ always has our agent ready.
+        async with BlueZPairingSession(self.mac_address) as bluez_session:
+            client = await establish_connection(
+                BleakClient,
+                ble_device,
+                name=f"WiiM Voice Remote ({self.mac_address})",
+                disconnected_callback=self._handle_disconnect,
+                max_attempts=2,
+            )
+            self._client = client
+
+            try:
+                paired_ok = await bluez_session.async_pair_and_trust(client)
+                if not paired_ok and not bluez_session.was_paired:
+                    try:
+                        await client.pair()
+                        _LOGGER.debug("BLE pair() succeeded for %s", self.mac_address)
+                    except NotImplementedError:
+                        pass
+                    except Exception as pair_err:
+                        if "Authentication" in str(pair_err):
+                            bluez_session.auth_rejected = True
+                        _LOGGER.debug("BLE pair() note for %s: %s", self.mac_address, pair_err)
+
+                if bluez_session.auth_rejected and not bluez_session.was_paired:
+                    if not self._warned_needs_pairing_mode:
+                        self._warned_needs_pairing_mode = True
+                        _LOGGER.warning(
+                            "WiiM Voice Remote %s rejected pairing because the remote still holds an old bond "
+                            "and is not in pairing mode. Hold Source + Mute on the remote for 3 seconds "
+                            "(until the LED flashes rapidly) to put it into pairing mode.",
+                            self.mac_address,
+                        )
+
+                consumer_char = None
+                kbd_char = None
+                voice_char = None
+                battery_char = None
+
+                try:
+                    for service in client.services:
+                        for char in service.characteristics:
+                            cuuid = char.uuid.lower()
+                            if cuuid == UUID_BATTERY_LEVEL:
+                                battery_char = char
+                                continue
+                            if cuuid != UUID_HID_REPORT:
+                                continue
+                            for desc in char.descriptors:
+                                if desc.uuid.lower() == UUID_REPORT_REF:
+                                    ref = bytes(await client.read_gatt_descriptor(desc.handle))
+                                    if ref == REPORT_REF_CONSUMER:
+                                        consumer_char = char
+                                    elif ref == REPORT_REF_KEYBOARD:
+                                        kbd_char = char
+                                    elif ref == REPORT_REF_VOICE_ADPCM:
+                                        voice_char = char
+                except Exception as gatt_err:
+                    # Only clear BlueZ bond if BlueZ thought it was already paired before connecting,
+                    # yet the connected remote rejected encrypted GATT HID descriptor reads (e.g. remote was reset).
+                    if bluez_session.was_paired:
+                        self._stale_bond_failures += 1
+                        if self._stale_bond_failures >= 2:
+                            self._stale_bond_failures = 0
+                            await async_bluez_remove_device(self.mac_address)
+                    raise gatt_err
+
+                if battery_char and self._on_battery:
+                    try:
+                        raw_bat = await client.read_gatt_char(battery_char)
+                        if raw_bat:
+                            self._on_battery(max(0, min(100, int(raw_bat[0]))))
+                        await client.start_notify(battery_char, self._on_battery_notify)
+                    except Exception as bat_err:
+                        _LOGGER.debug("Battery read/notify error for %s: %s", self.mac_address, bat_err)
+
+                if not voice_char:
+                    _LOGGER.warning(
+                        "WiiM Voice Remote %s connected, but HID Voice Report (03 01) was not found",
+                        self.mac_address,
+                    )
+                    return
+
+                if consumer_char:
+                    await client.start_notify(consumer_char, self._on_consumer_notify)
+                if kbd_char:
+                    await client.start_notify(kbd_char, self._on_keyboard_notify)
+                await client.start_notify(voice_char, self._on_voice_notify)
+            except Exception:
+                if client.is_connected:
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
+                self._client = None
+                raise
 
         try:
-            try:
-                await client.pair()
-                _LOGGER.debug("BLE pair() succeeded for %s", self.mac_address)
-            except NotImplementedError:
-                pass
-            except Exception as pair_err:
-                _LOGGER.debug("BLE pair() note for %s: %s", self.mac_address, pair_err)
-
-            consumer_char = None
-            kbd_char = None
-            voice_char = None
-            battery_char = None
-
-            for service in client.services:
-                for char in service.characteristics:
-                    cuuid = char.uuid.lower()
-                    if cuuid == UUID_BATTERY_LEVEL:
-                        battery_char = char
-                        continue
-                    if cuuid != UUID_HID_REPORT:
-                        continue
-                    for desc in char.descriptors:
-                        if desc.uuid.lower() == UUID_REPORT_REF:
-                            ref = bytes(await client.read_gatt_descriptor(desc.handle))
-                            if ref == REPORT_REF_CONSUMER:
-                                consumer_char = char
-                            elif ref == REPORT_REF_KEYBOARD:
-                                kbd_char = char
-                            elif ref == REPORT_REF_VOICE_ADPCM:
-                                voice_char = char
-
-            if battery_char and self._on_battery:
-                try:
-                    raw_bat = await client.read_gatt_char(battery_char)
-                    if raw_bat:
-                        self._on_battery(max(0, min(100, int(raw_bat[0]))))
-                    await client.start_notify(battery_char, self._on_battery_notify)
-                except Exception as bat_err:
-                    _LOGGER.debug("Battery read/notify error for %s: %s", self.mac_address, bat_err)
-
-            if not voice_char:
-                _LOGGER.warning(
-                    "WiiM Voice Remote %s connected, but HID Voice Report (03 01) was not found",
-                    self.mac_address,
-                )
-                return
-
-            if consumer_char:
-                await client.start_notify(consumer_char, self._on_consumer_notify)
-            if kbd_char:
-                await client.start_notify(kbd_char, self._on_keyboard_notify)
-            await client.start_notify(voice_char, self._on_voice_notify)
-
             _LOGGER.info("WiiM Voice Remote %s connected and ready", self.mac_address)
             self._consecutive_failures = 0
+            self._stale_bond_failures = 0
+            self._warned_needs_pairing_mode = False
             await self._disconnected_event.wait()
         finally:
             if client.is_connected:
@@ -304,9 +343,6 @@ class WiiMRemoteClient:
                     self._consecutive_failures,
                     err,
                 )
-                if self._consecutive_failures >= 2:
-                    self._consecutive_failures = 0
-                    await async_bluez_remove_device(self.mac_address)
 
             if self._stop_event.is_set():
                 break
